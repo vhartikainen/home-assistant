@@ -27,6 +27,8 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_ID, default=[]): vol.All(cv.ensure_list, [vol.Coerce(int)]),
         vol.Required(CONF_SENDER_ID): vol.All(cv.ensure_list, [vol.Coerce(int)]),
         vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
+        # TODO: Added support for brightness attribute - add support for RGB as well?
+        vol.Optional(ATTR_BRIGHTNESS): cv.positive_int
     }
 )
 
@@ -36,18 +38,21 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     sender_id = config.get(CONF_SENDER_ID)
     dev_name = config.get(CONF_NAME)
     dev_id = config.get(CONF_ID)
+    brightness = config.get(ATTR_BRIGHTNESS)
 
-    add_entities([EnOceanLight(sender_id, dev_id, dev_name)])
+    # TODO: Add support for RGB as well
+    add_entities([EnOceanLight(sender_id, dev_id, dev_name, brightness)])
 
 
 class EnOceanLight(EnOceanEntity, LightEntity):
     """Representation of an EnOcean light source."""
 
-    def __init__(self, sender_id, dev_id, dev_name):
+    def __init__(self, sender_id, dev_id, dev_name, brightness):
         """Initialize the EnOcean light source."""
         super().__init__(dev_id, dev_name)
         self._on_state = False
-        self._brightness = 50
+        # TODO: Support default brightness level / also used for detecting support for dimmable relays
+        self._brightness = brightness
         self._sender_id = sender_id
 
     @property
@@ -56,6 +61,7 @@ class EnOceanLight(EnOceanEntity, LightEntity):
         return self.dev_name
 
     @property
+
     def brightness(self):
         """Brightness of the light.
 
@@ -72,30 +78,64 @@ class EnOceanLight(EnOceanEntity, LightEntity):
     @property
     def supported_features(self):
         """Flag supported features."""
-        return SUPPORT_ENOCEAN
+        # TODO: Support for non-dimmable relays
+        if self.brightness is not None:
+            return SUPPORT_ENOCEAN
+        else:
+            return 0
 
     def turn_on(self, **kwargs):
         """Turn the light source on or sets a specific dimmer value."""
-        brightness = kwargs.get(ATTR_BRIGHTNESS)
-        if brightness is not None:
-            self._brightness = brightness
+        # TDOO: Fix logic for detecting supported features
+        if self.supported_features == SUPPORT_BRIGHTNESS:
+            brightness = kwargs.get(ATTR_BRIGHTNESS)
+            if brightness is not None:
+                self._brightness = brightness
 
-        bval = math.floor(self._brightness / 256.0 * 100.0)
-        if bval == 0:
-            bval = 1
-        command = [0xA5, 0x02, bval, 0x01, 0x09]
+            bval = math.floor(self._brightness / 256.0 * 100.0)
+            if bval == 0:
+                bval = 1
+            command = [0xA5, 0x02, bval, 0x01, 0x09]
+        else:
+            """Turn the light source on. Simulate GFVS command"""
+            #TODO: Fix docs - https://www.eltako.com/fileadmin/downloads/en/_main_catalogue/Gesamt-Katalog_ChT_gb_lowRes.pdf
+            command = [0xA5, 0x01, 0x0, 0x00, 0x09]
+
         command.extend(self._sender_id)
         command.extend([0x00])
         self.send_command(command, [], 0x01)
         self._on_state = True
 
     def turn_off(self, **kwargs):
-        """Turn the light source off."""
-        command = [0xA5, 0x02, 0x00, 0x01, 0x09]
+        if self.supported_features == SUPPORT_BRIGHTNESS:
+            """Turn the light source off."""
+            command = [0xA5, 0x02, 0x00, 0x01, 0x09]
+        else:
+            # TODO: Non-dimmable:
+            command = [0xA5, 0x01, 0x00, 0x00, 0x08]
+
         command.extend(self._sender_id)
         command.extend([0x00])
         self.send_command(command, [], 0x01)
         self._on_state = False
+
+    # ## Candidate for FSR14-4x
+    # def turn_on(self, **kwargs):
+    #     """Turn the light source on or sets a specific dimmer value."""
+    #     command = [0xA5, 0x01, 0x0, 0x00, 0x09]
+    #     command.extend(self._sender_id)
+    #     command.extend([0x00])
+
+    #     self.send_command(command, [], 0x01)
+    #     self._on_state = True
+
+    # def turn_off(self, **kwargs):
+    #     """Turn the light source off."""
+    #     command = [0xA5, 0x01, 0x00, 0x00, 0x08]
+    #     command.extend(self._sender_id)
+    #     command.extend([0x00])
+    #     self.send_command(command, [], 0x01)
+    #     self._on_state = False
 
     def value_changed(self, packet):
         """Update the internal state of this device.
